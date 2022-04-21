@@ -8,6 +8,8 @@ from icecream import ic
 from scipy.spatial.transform import Rotation as Rot
 from scipy.spatial.transform import Slerp
 
+import os
+
 
 # This function is borrowed from IDR: https://github.com/lioryariv/idr
 def load_K_Rt_from_P(filename, P=None):
@@ -57,16 +59,30 @@ class Dataset:
         self.masks_np = np.stack([cv.imread(im_name) for im_name in self.masks_lis]) / 256.0
 
         # world_mat is a projection matrix from world to image
-        self.world_mats_np = [camera_dict['world_mat_%d' % idx].astype(np.float32) for idx in range(self.n_images)]
+        #self.world_mats_np = [camera_dict['world_mat_%d' % idx].astype(np.float32) for idx in range(self.n_images)]
+        self.world_mats_np = []
+        for im_path in self.images_lis:
+            num = os.path.basename(im_path).split('.png')[0]
 
-        self.scale_mats_np = []
+            self.world_mats_np.append(camera_dict['world_mat_' + num].astype(np.float32))
 
         # scale_mat: used for coordinate normalization, we assume the scene to render is inside a unit sphere at origin.
-        self.scale_mats_np = [camera_dict['scale_mat_%d' % idx].astype(np.float32) for idx in range(self.n_images)]
+        #self.scale_mats_np = [camera_dict['scale_mat_%d' % idx].astype(np.float32) for idx in range(self.n_images)]
+
+        self.scale_mats_np = []
+        for im_path in self.images_lis:
+            num = os.path.basename(im_path).split('.png')[0]
+
+            #self.scale_mats_np.append(camera_dict['scale_mat_' + num].astype(np.float32))
+            scale_mat_np = np.eye(4)
+            scale_mat_np[0:3, 0:3] = np.eye(3) / 5
+            self.scale_mats_np.append(scale_mat_np)
 
         self.intrinsics_all = []
         self.pose_all = []
 
+        dummy_mat = np.zeros((4, 1))
+        dummy_mat[3] = 1
         for scale_mat, world_mat in zip(self.scale_mats_np, self.world_mats_np):
             P = world_mat @ scale_mat
             P = P[:3, :4]
@@ -86,7 +102,11 @@ class Dataset:
         object_bbox_min = np.array([-1.01, -1.01, -1.01, 1.0])
         object_bbox_max = np.array([ 1.01,  1.01,  1.01, 1.0])
         # Object scale mat: region of interest to **extract mesh**
-        object_scale_mat = np.load(os.path.join(self.data_dir, self.object_cameras_name))['scale_mat_0']
+        #object_scale_mat = np.load(os.path.join(self.data_dir, self.object_cameras_name))['scale_mat_0']
+        #object_scale_mat = np.load(os.path.join(self.data_dir, self.object_cameras_name))['scale_mat_000']
+        object_scale_mat = np.eye(4)
+        object_scale_mat[0:3, 0:3] = np.eye(3) / 5
+
         object_bbox_min = np.linalg.inv(self.scale_mats_np[0]) @ object_scale_mat @ object_bbox_min[:, None]
         object_bbox_max = np.linalg.inv(self.scale_mats_np[0]) @ object_scale_mat @ object_bbox_max[:, None]
         self.object_bbox_min = object_bbox_min[:3, 0]
