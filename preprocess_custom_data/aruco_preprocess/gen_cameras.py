@@ -10,8 +10,8 @@ import trimesh
 
 def convert_cameras(work_dir, crop_pixels):
     # load cameras
-    poses = np.load(os.path.join(work_dir, './tmp/poses.npy'))
-    intrinsic_raw = np.load(os.path.join(work_dir, './tmp/intrinsic.npy'))
+    poses = np.load(os.path.join(work_dir, 'tmp/poses.npy'))
+    intrinsic_raw = np.load(os.path.join(work_dir, 'tmp/intrinsic.npy'))
     n_images = len(poses)
 
     intrinsic = np.diag([1.0, 1.0, 1.0, 1.0]).astype(np.float32)

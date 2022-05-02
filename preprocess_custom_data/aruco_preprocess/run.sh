@@ -1,6 +1,6 @@
 calib_bin=./build/calibration
-work_dir=../example/thin_rope
-n_images=32
+work_dir=./plants/plant2_halfsize
+n_images=34
 
 # Define the region of interest (ROI).
 # We assume the center of the ROI is the center of the calibration board.
@@ -14,6 +14,6 @@ mkdir ${work_dir}/tmp
 mkdir ${work_dir}/tmp/image_undistort
 mkdir ${work_dir}/tmp/image_for_aruco
 
-${calib_bin} ${work_dir} ${n_images} ${board_scale}
+sudo ${calib_bin} ${work_dir} ${n_images} ${board_scale}
 
 python gen_cameras.py ${work_dir} ${crop_pixels}
