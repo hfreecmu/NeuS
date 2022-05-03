@@ -84,7 +84,7 @@ def main():
             P[3, 3] = 1
             neus_param[f'world_mat_{name_idx}'] = P
             neus_param[f'scale_mat_{name_idx}'] = scale_mat
-        np.savez(f"{case}/cameras_sphere.npz", neus_param)
+        np.savez(f"{case}/cameras_sphere.npz", **neus_param)
 
     for idx, case in enumerate(sorted(cases)):
         print(f"Renamed case {case} to {idx:05d}")
