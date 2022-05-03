@@ -107,10 +107,8 @@ class Dataset:
         object_bbox_min = np.array([-1.01, -1.01, -1.01, 1.0])
         object_bbox_max = np.array([ 1.01,  1.01,  1.01, 1.0])
         # Object scale mat: region of interest to **extract mesh**
-        try:
-            object_scale_mat = np.load(os.path.join(self.data_dir, self.object_cameras_name))['scale_mat_000']
-        except KeyError:
-            object_scale_mat = np.load(os.path.join(self.data_dir, self.object_cameras_name))['scale_mat_0']
+        object_scale_mat = self.scale_mats_np[0]
+
         #object_scale_mat = np.eye(4)
         #object_scale_mat[0:3, 0:3] = np.eye(3)
 
