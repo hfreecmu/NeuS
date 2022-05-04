@@ -5,27 +5,30 @@ import numpy as np
 import cv2
 
 
-def convert_NDC_to_screen(
-    im_w, im_h, fx_ndc, fy_ndc, px_ndc, py_ndc
-):
-    s = min(im_w, im_h)
-    px_screen = -(px_ndc * s / 2) + im_w / 2
-    py_screen = -(py_ndc * s / 2) + im_h / 2
-    fx_screen = fx_ndc * s / 2
-    fy_screen = fy_ndc * s / 2
+# https://github.com/facebookresearch/co3d/blob/7ee9f5ba0b87b22e1dfe92c4d2010cb14dd467a6/dataset/co3d_dataset.py#L490
+def co3d_rescale(principal_point, focal_length, im_wh):
+
+    # first, we convert from the legacy Pytorch3D NDC convention
+    # (currently used in CO3D for storing intrinsics) to pixels
+    half_image_size_wh_orig = im_wh / 2.0
+
+    # principal point and focal length in pixels
+    principal_point_px = -1.0 * (principal_point - 1.0) * half_image_size_wh_orig
+    focal_length_px = focal_length * half_image_size_wh_orig
+    return principal_point_px, focal_length_px
+
+
+def convert_NDC_to_screen_old_NDC(im_w, im_h, fx_ndc, fy_ndc, px_ndc, py_ndc):
+    principal_point_ndc = np.array((px_ndc, py_ndc))
+    focal_length_ndc = np.array((fx_ndc, fy_ndc))
+    im_wh = np.array((im_w, im_h))
+
+    principal_point_px, focal_length_px = co3d_rescale(
+        principal_point_ndc, focal_length_ndc, im_wh
+    )
+    fx_screen, fy_screen = focal_length_px
+    px_screen, py_screen = principal_point_px
     return fx_screen, fy_screen, px_screen, py_screen
-
-
-def convert_screen_to_NDC(
-        image_width, image_height, fx_screen, fy_screen, px_screen, py_screen
-):
-    s = min(image_width, image_height)
-    fx_ndc = fx_screen * 2.0 / s
-    fy_ndc = fy_screen * 2.0 / s
-
-    px_ndc = -(px_screen - image_width / 2.0) * 2.0 / s
-    py_ndc = -(py_screen - image_height / 2.0) * 2.0 / s
-    return fx_ndc, fy_ndc, px_ndc, py_ndc
 
 
 def main():
@@ -68,6 +71,8 @@ def main():
         for data in params:
             name = data['path'].stem
             name_idx = name.replace("frame", "")
+            #if int(name_idx) > 9:
+            #    continue
 
             h, w = data['size']
             R = np.array(data['R']).T
@@ -76,12 +81,23 @@ def main():
             pp = np.array(data['principal_point'])
 
             K = np.zeros((3, 3), dtype=R.dtype)
-            K[0, 0], K[1, 1], K[0, 2], K[1, 2] = convert_NDC_to_screen(w, h, ff[0], ff[1], pp[0], pp[1])
+            K[0, 0], K[1, 1], K[0, 2], K[1, 2] = convert_NDC_to_screen_old_NDC(
+                                                    im_h=h,
+                                                    im_w=w,
+                                                    fx_ndc=ff[0],
+                                                    fy_ndc=ff[1],
+                                                    px_ndc=pp[0],
+                                                    py_ndc=pp[1],
+                                                )
             K[2, 2] = 1
+
+            K[0, 0] = -K[0, 0]
+            K[1, 1] = -K[1, 1]
 
             P = (K @ np.concatenate((R, T[:, None]), axis=1))
             P = np.concatenate((P, np.zeros((1, 4))), axis=0)
             P[3, 3] = 1
+
             neus_param[f'world_mat_{name_idx}'] = P
             neus_param[f'scale_mat_{name_idx}'] = scale_mat
         np.savez(f"{case}/cameras_sphere.npz", **neus_param)
