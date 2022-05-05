@@ -56,9 +56,8 @@ class Dataset:
         if max_images is not None:
             permute = np.arange(len(self.images_lis))
             np.random.shuffle(permute)
-            self.images_lis = sorted([self.images_lis[i] for i in permute])
-            self.masks_lis = sorted([self.masks_lis[i] for i in permute])
-
+            self.images_lis = sorted([self.images_lis[i] for i in permute[:max_images]])
+            self.masks_lis = sorted([self.masks_lis[i] for i in permute[:max_images]])
         self.n_images = len(self.images_lis)
         images_np = [cv.imread(im_name) / 256.0 for im_name in self.images_lis]
         masks_np = [cv.imread(im_name) / 256.0 for im_name in self.masks_lis]

@@ -128,9 +128,11 @@ class MetaWeights:
         path = os.path.join(self.base_exp_dir, 'checkpoints', 'ckpt_{:0>6d}.pth'.format(self.iter_step))
         print(f"Main: saving weights at {path}")
         torch.save(checkpoint, path)
+        return path
 
-    def load_checkpoint(self):
-        ckpt_path = os.path.join(self.base_exp_dir, 'checkpoints', self.load_path)
+    def load_checkpoint(self, ckpt_path=None):
+        if ckpt_path is None:
+            ckpt_path = os.path.join(self.base_exp_dir, 'checkpoints', self.load_path)
         if not os.path.exists(ckpt_path):
             print("Main: Training from scratch")
             return
@@ -534,7 +536,7 @@ def prep_dataset(sendq: queue.Queue, retq, dnum):
         retq.put(ds)
 
 
-def device_runner(receive_queue, return_queue, conf_text, case, device_num):
+def device_runner(receive_queue, return_queue, conf_text_base, case, device_num):
     """
     Method to call to run a process.
 
@@ -554,7 +556,7 @@ def device_runner(receive_queue, return_queue, conf_text, case, device_num):
     dataset_thread = threading.Thread(group=None, target=prep_dataset, args=(dataset_sendq, dataset_retq, device_num))
     dataset_thread.start()
 
-    conf_text = conf_text.replace('CASE_NAME', case)
+    conf_text = conf_text_base.replace('CASE_NAME', case)
     t0 = time.time()
     dataset_sendq.put(conf_text)
     dataset = dataset_retq.get()
@@ -567,7 +569,7 @@ def device_runner(receive_queue, return_queue, conf_text, case, device_num):
         # print(f"{os.getpid()}: Creating runner with case {case}")
 
         case, initial_weights = value
-        conf_text = conf_text.replace('CASE_NAME', case)
+        conf_text = conf_text_base.replace('CASE_NAME', case)
         dataset_sendq.put(conf_text)
 
         # Train
@@ -668,7 +670,8 @@ def main():
         print(f"Train {stats['train_time']:.2f}s Load {stats['load_time']:.2f}s")
 
         if (iter_idx + 1) % meta_conf['meta.save_freq'] == 0:
-            mweights.save_checkpoint()
+            pth = mweights.save_checkpoint()
+            mweights.load_checkpoint(pth)
 
     # Shutdown flag
     for sq in send_qs:
