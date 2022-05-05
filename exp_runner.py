@@ -42,6 +42,7 @@ class Runner:
         is_meta = self.conf.get_bool('train.meta_eval', default=False)
         if is_meta: 
             is_continue = True
+        self.is_meta = is_meta
 
 
         # Training parameters
@@ -102,6 +103,8 @@ class Runner:
         if latest_model_name is not None:
             logging.info('Find checkpoint: {}'.format(latest_model_name))
             self.load_checkpoint(latest_model_name)
+        if is_meta: 
+            self.iter_step = 0
 
         # Backup codes and configs for debug
         if self.mode[:5] == 'train':
@@ -195,6 +198,9 @@ class Runner:
             return np.min([1.0, self.iter_step / self.anneal_end])
 
     def update_learning_rate(self):
+        if self.is_meta: 
+            return 
+
         if self.iter_step < self.warm_up_end:
             learning_factor = self.iter_step / self.warm_up_end
         else:

@@ -360,15 +360,7 @@ class Runner:
             return np.min([1.0, self.iter_step / self.anneal_end])
 
     def update_learning_rate(self):
-        if self.iter_step < self.warm_up_end:
-            learning_factor = self.iter_step / self.warm_up_end
-        else:
-            alpha = self.learning_rate_alpha
-            progress = (self.iter_step - self.warm_up_end) / (self.end_iter - self.warm_up_end)
-            learning_factor = (np.cos(np.pi * progress) + 1.0) * 0.5 * (1 - alpha) + alpha
-
-        for g in self.optimizer.param_groups:
-            g['lr'] = self.learning_rate * learning_factor
+        pass
 
     def load_checkpoint(self, checkpoint_name):
         checkpoint = torch.load(os.path.join(self.base_exp_dir, 'checkpoints', checkpoint_name), map_location=self.device)
