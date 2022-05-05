@@ -39,7 +39,7 @@ def load_K_Rt_from_P(filename, P=None):
 
 
 class Dataset:
-    def __init__(self, conf, max_images=None):
+    def __init__(self, conf, max_images=None, dnum=0):
         super(Dataset, self).__init__()
         # print('Load data: Begin')
         self.data_dir = conf.get_string('data_dir')
@@ -123,7 +123,7 @@ class Dataset:
         self.object_bbox_min = object_bbox_min[:3, 0]
         self.object_bbox_max = object_bbox_max[:3, 0]
 
-        self.to("cuda")
+        self.to(f"cuda:{dnum}")
 
         # print('Load data: End')
     def to(self, device):
