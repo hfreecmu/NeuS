@@ -600,6 +600,8 @@ def device_runner(receive_queue, return_queue, conf_text, case, device_num):
         t0 = time.time()
         dataset = dataset_retq.get()
 
+    dataset_sendq.put(None)
+
 
 def train_meta_iter(mweights: MetaWeights, send_qs, ret_q, picked_cases):
     """Train for a single iteration."""
@@ -621,7 +623,6 @@ def train_meta_iter(mweights: MetaWeights, send_qs, ret_q, picked_cases):
     stats = stats.get_summary()
 
     mweights.writer_write(stats)
-    t0 = time.time()
     mweights.update(sd_infos)
     return stats
 
