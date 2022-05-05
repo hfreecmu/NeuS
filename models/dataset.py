@@ -39,12 +39,9 @@ def load_K_Rt_from_P(filename, P=None):
 
 
 class Dataset:
-    def __init__(self, conf):
+    def __init__(self, conf, max_images=None):
         super(Dataset, self).__init__()
         # print('Load data: Begin')
-        self.device = torch.device('cuda')
-        self.conf = conf
-
         self.data_dir = conf.get_string('data_dir')
         self.render_cameras_name = conf.get_string('render_cameras_name')
         self.object_cameras_name = conf.get_string('object_cameras_name')
@@ -55,10 +52,16 @@ class Dataset:
         camera_dict = np.load(os.path.join(self.data_dir, self.render_cameras_name))
         self.camera_dict = camera_dict
         self.images_lis = sorted(glob(os.path.join(self.data_dir, 'image/*.png')))
-        self.n_images = len(self.images_lis)
-        self.images_np = [cv.imread(im_name) / 256.0 for im_name in self.images_lis]
         self.masks_lis = sorted(glob(os.path.join(self.data_dir, 'mask/*.png')))
-        self.masks_np = [cv.imread(im_name) / 256.0 for im_name in self.masks_lis]
+        if max_images is not None:
+            permute = np.arange(len(self.images_lis))
+            np.random.shuffle(permute)
+            self.images_lis = sorted([self.images_lis[i] for i in permute])
+            self.masks_lis = sorted([self.masks_lis[i] for i in permute])
+
+        self.n_images = len(self.images_lis)
+        images_np = [cv.imread(im_name) / 256.0 for im_name in self.images_lis]
+        masks_np = [cv.imread(im_name) / 256.0 for im_name in self.masks_lis]
 
         # world_mat is a projection matrix from world to image
         #self.world_mats_np = [camera_dict['world_mat_%d' % idx].astype(np.float32) for idx in range(self.n_images)]
@@ -96,12 +99,12 @@ class Dataset:
             self.intrinsics_all.append(torch.from_numpy(intrinsics).float())
             self.pose_all.append(torch.from_numpy(pose).float())
 
-        self.images = [torch.from_numpy(img.astype(np.float32)).cpu() for img in self.images_np]
-        self.masks  = [torch.from_numpy(img.astype(np.float32)).cpu() for img in self.masks_np]
-        self.intrinsics_all = torch.stack(self.intrinsics_all).to(self.device)   # [n_images, 4, 4]
+        self.images = [torch.from_numpy(img.astype(np.float32)).cpu() for img in images_np]
+        self.masks  = [torch.from_numpy(img.astype(np.float32)).cpu() for img in masks_np]
+        self.intrinsics_all = torch.stack(self.intrinsics_all)   # [n_images, 4, 4]
         self.intrinsics_all_inv = torch.inverse(self.intrinsics_all)  # [n_images, 4, 4]
         self.focal = self.intrinsics_all[0][0, 0]
-        self.pose_all = torch.stack(self.pose_all).to(self.device)  # [n_images, 4, 4]
+        self.pose_all = torch.stack(self.pose_all)  # [n_images, 4, 4]
         self.H, self.W = [img.shape[0] for img in self.images], [img.shape[1] for img in self.images]
 
         object_bbox_min = np.array([-1.01, -1.01, -1.01, 1.0])
@@ -120,7 +123,14 @@ class Dataset:
         self.object_bbox_min = object_bbox_min[:3, 0]
         self.object_bbox_max = object_bbox_max[:3, 0]
 
+        self.to("cuda")
+
         # print('Load data: End')
+    def to(self, device):
+        self.intrinsics_all = self.intrinsics_all.to(device)
+        self.intrinsics_all_inv = self.intrinsics_all_inv.to(device)
+        self.pose_all = self.pose_all.to(device)
+
 
     def gen_rays_at(self, img_idx, resolution_level=1):
         """

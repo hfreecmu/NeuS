@@ -18,31 +18,47 @@ from models.fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, N
 from models.renderer import NeuSRenderer
 from copy import deepcopy
 from torch import multiprocessing as mp
+import threading
 import queue
+import random
 
 
 class MetaWeights:
     """Class to consolidate."""
     def __init__(self, conf):
         self.conf = conf
-        # Initial weights are random
-        self.nerf_sd = NeRF(**self.conf['model.nerf']).state_dict()
-        self.sdf_sd = SDFNetwork(**self.conf['model.sdf_network']).state_dict()
-        self.deviation_sd = SingleVarianceNetwork(**self.conf['model.variance_network']).state_dict()
-        self.color_sd = RenderingNetwork(**self.conf['model.rendering_network']).state_dict()
-
-        self.epsilon = conf['meta.epsilon']
         self.base_exp_dir = conf['meta.base_exp_dir']
+        self.load_path = conf['meta.load_path']
+        self.lr = conf['meta.lr']
+
+        # Initial weights are random
+        self.nerf = NeRF(**self.conf['model.nerf'])
+        self.sdf = SDFNetwork(**self.conf['model.sdf_network'])
+        self.deviation = SingleVarianceNetwork(**self.conf['model.variance_network'])
+        self.color = RenderingNetwork(**self.conf['model.rendering_network'])
+
+        self.optims = [torch.optim.Adam(m.parameters(), lr=self.lr) for m in [
+            self.nerf, self.sdf, self.deviation, self.color
+        ]]
+
+        # Will only load if the load path is valid
         self.iter_step = 0
+        self.load_checkpoint()
         self.writer = SummaryWriter(log_dir=os.path.join(self.base_exp_dir, 'logs'))
+
+        # Placeholder networks for gradients
+        self.nerf_grad = NeRF(**self.conf['model.nerf'])
+        self.sdf_grad = SDFNetwork(**self.conf['model.sdf_network'])
+        self.deviation_grad = SingleVarianceNetwork(**self.conf['model.variance_network'])
+        self.color_grad = RenderingNetwork(**self.conf['model.rendering_network'])
 
     def get_state_dicts(self):
         """This dict of state_dicts is passed to each process."""
         return {
-            'nerf': self.nerf_sd,
-            'sdf': self.sdf_sd,
-            'deviation': self.deviation_sd,
-            'color': self.color_sd
+            'nerf': self.nerf.state_dict(),
+            'sdf': self.sdf.state_dict(),
+            'deviation': self.deviation.state_dict(),
+            'color': self.color.state_dict()
         }
 
     @torch.no_grad()
@@ -58,14 +74,17 @@ class MetaWeights:
         network at the end of training.
         """
         # Accumulate render weights
-        for network in ["nerf", "sdf", "deviation", "color"]:
-            avg_weights = self.average_dicts([info[network] for info in sd_infos])
-            neg_grad = self.subtract_dicts(avg_weights, getattr(self, network + "_sd"))
-            # TODO: we could apply a fancier optimizer with neg_grad
-            # TODO: instead we just add it, like SGD
-            # TODO: this had the best performance in the meta-nerf paper
-            new_sd = self.add_dicts_w_epsilon(getattr(self, network + "_sd"), neg_grad)
-            setattr(self, "network" + "_sd", new_sd)
+        for name, optim in zip(["nerf", "sdf", "deviation", "color"], self.optims):
+            network = getattr(self, name)
+
+            avg_weights = self.average_dicts([info[name] for info in sd_infos])
+            neg_grad = self.subtract_dicts(avg_weights, network.state_dict())
+
+            grad_net = getattr(self, name + "_grad")
+            grad_net.load_state_dict(neg_grad)
+            for p_curr, p_grad in zip(network.parameters(), grad_net.parameters()):
+                p_curr.grad = -p_grad
+            optim.step()
 
         self.iter_step += 1
 
@@ -93,42 +112,53 @@ class MetaWeights:
                 d1[key] -= d2[key]
         return d1
 
-    def add_dicts_w_epsilon(self, d1, d2):
-        """Again, in place, performs SGD update."""
-        for key in d1:
-            with torch.no_grad():
-                d1[key] += (self.epsilon * d2[key]).to(d1[key].dtype)
-        return d1
-
     def save_checkpoint(self):
         """Copied over from the Runner class.
-
-        NOTE: this doesn't save an optim.
         """
         checkpoint = {
-            'nerf': self.nerf_sd,
-            'sdf_network_fine': self.sdf_sd,
-            'variance_network_fine': self.deviation_sd,
-            'color_network_fine': self.color_sd,
+            'nerf': self.nerf.state_dict(),
+            'sdf_network_fine': self.sdf.state_dict(),
+            'variance_network_fine': self.deviation.state_dict(),
+            'color_network_fine': self.color.state_dict(),
             'iter_step': self.iter_step,
+            'meta_optims': [o.state_dict() for o in self.optims]
         }
 
         os.makedirs(os.path.join(self.base_exp_dir, 'checkpoints'), exist_ok=True)
-        torch.save(checkpoint, os.path.join(self.base_exp_dir, 'checkpoints', 'ckpt_{:0>6d}.pth'.format(self.iter_step)))
+        path = os.path.join(self.base_exp_dir, 'checkpoints', 'ckpt_{:0>6d}.pth'.format(self.iter_step))
+        print(f"Main: saving weights at {path}")
+        torch.save(checkpoint, path)
+
+    def load_checkpoint(self):
+        ckpt_path = os.path.join(self.base_exp_dir, 'checkpoints', self.load_path)
+        if not os.path.exists(ckpt_path):
+            print("Main: Training from scratch")
+            return
+        else:
+            print(f"Main: Loading weights from {ckpt_path}")
+
+        checkpoint = torch.load(ckpt_path)
+        self.nerf.load_state_dict(checkpoint['nerf'])
+        self.sdf.load_state_dict(checkpoint['sdf_network_fine'])
+        self.deviation.load_state_dict(checkpoint['variance_network_fine'])
+        self.color.load_state_dict(checkpoint['color_network_fine'])
+        for o, sd in zip(self.optims, checkpoint['meta_optims']):
+            o.load_state_dict(sd)
+        self.iter_step = checkpoint['iter_step']
+        print(f"Main: Loaded weights, resuming from outer loop {self.iter_step}")
 
     def writer_write(self, stats):
         for k, v in stats.items():
             self.writer.add_scalar(k, v, self.iter_step)
 
 
-def read_conf(conf_path, case):
+def read_conf(conf_path):
     f = open(conf_path)
     conf_text = f.read()
-    conf_text = conf_text.replace('CASE_NAME', case)
     f.close()
 
     conf = ConfigFactory.parse_string(conf_text)
-    return conf
+    return conf, conf_text
 
 
 class AverageDict:
@@ -149,26 +179,17 @@ class AverageDict:
 
 
 class Runner:
-    def __init__(self, conf_path, mode='train', case='CASE_NAME', is_continue=False,
-                 initial_weights: dict = None, conf=None, no_save=False
+    def __init__(self, dataset, conf_text, mode='train', case='CASE_NAME', is_continue=False,
+                 initial_weights: dict = None, no_save=False
                  ):
         self.device = torch.device('cuda')
-        if not conf:
-            # Configuration
-            self.conf_path = conf_path
-            f = open(self.conf_path)
-            conf_text = f.read()
-            conf_text = conf_text.replace('CASE_NAME', case)
-            f.close()
-            self.conf = ConfigFactory.parse_string(conf_text)
-        else:
-            self.conf = conf
+
+        conf_text = conf_text.replace('CASE_NAME', case)
+        self.conf = ConfigFactory.parse_string(conf_text)
 
         self.no_save = no_save
-        self.conf['dataset.data_dir'] = self.conf['dataset.data_dir'].replace('CASE_NAME', case)
         self.base_exp_dir = self.conf['general.base_exp_dir']
-        # os.makedirs(self.base_exp_dir, exist_ok=True)
-        self.dataset = Dataset(self.conf['dataset'])
+        self.dataset = dataset
         self.iter_step = 0
 
         # Training parameters
@@ -511,7 +532,17 @@ class Runner:
         writer.release()
 
 
-def device_runner(receive_queue, return_queue, conf, device_num):
+def prep_dataset(sendq: queue.Queue, retq):
+    while True:
+        conf_text = sendq.get()
+        if conf_text is None:
+            break
+        conf = ConfigFactory.parse_string(conf_text)
+        ds = Dataset(conf['dataset'], conf["meta.max_img_per_case"])
+        retq.put(ds)
+
+
+def device_runner(receive_queue, return_queue, conf_text, case, device_num):
     """
     Method to call to run a process.
 
@@ -526,33 +557,55 @@ def device_runner(receive_queue, return_queue, conf, device_num):
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
     torch.cuda.set_device(f"cuda:{device_num}")
 
+    dataset_sendq = queue.Queue()
+    dataset_retq = queue.Queue()
+    dataset_thread = threading.Thread(group=None, target=prep_dataset, args=(dataset_sendq, dataset_retq))
+    dataset_thread.start()
+
+    conf_text = conf_text.replace('CASE_NAME', case)
+    t0 = time.time()
+    dataset_sendq.put(conf_text)
+    dataset = dataset_retq.get()
+
     while True:
         value = receive_queue.get()
         # Stop flag
         if value is None:
             break
+        # print(f"{os.getpid()}: Creating runner with case {case}")
+
         case, initial_weights = value
+        conf_text = conf_text.replace('CASE_NAME', case)
+        dataset_sendq.put(conf_text)
 
         # Train
-        print(f"{os.getpid()}: Creating runner with case {case}")
         runner = Runner(
-            None, "train", case, False, initial_weights=initial_weights, conf=conf, no_save=True
+            dataset=dataset, conf_text=conf_text, mode="train", case=case, initial_weights=initial_weights, no_save=True
         )
-        print(f"{os.getpid()}: Begin training")
+        # print(f"{os.getpid()}: Begin training, load time {time.time() - t0:.2f}s")
+        load_time = time.time() - t0
+        t0 = time.time()
         stats = runner.train()
-        print(f"{os.getpid()}: End training, sending weights")
+        # print(f"{os.getpid()}: End training, train time {time.time() - t0:.2f}s")
+        train_time = time.time() - t0
 
         # Average losses over the last 10 iterations
         stats = stats.get_summary(from_idx=-10)
+        stats['load_time'] = load_time
+        stats['train_time'] = train_time
         # Return on CPU, to prevent OOM (averaging seems very fast on CPU anyway)
         return_queue.put((os.getpid(), runner.get_state_dicts(device="cpu"), stats))
 
+        # Get new dataset before starting training
+        t0 = time.time()
+        dataset = dataset_retq.get()
 
-def train_meta_iter(mweights: MetaWeights, send_qs, ret_q, cases):
+
+def train_meta_iter(mweights: MetaWeights, send_qs, ret_q, picked_cases):
     """Train for a single iteration."""
     # Send the dataset name and initial weights to all processes
     w = mweights.get_state_dicts()
-    for sq, case in zip(send_qs, cases):
+    for sq, case in zip(send_qs, picked_cases):
         sq.put((case, w))
 
     # Get the weights and summary from all processes
@@ -568,8 +621,8 @@ def train_meta_iter(mweights: MetaWeights, send_qs, ret_q, cases):
     stats = stats.get_summary()
 
     mweights.writer_write(stats)
+    t0 = time.time()
     mweights.update(sd_infos)
-    print("Main: Updated weights")
     return stats
 
 
@@ -578,41 +631,51 @@ def main():
     logging.basicConfig(level=logging.DEBUG, format=FORMAT)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--conf', type=str, default='./confs/base.conf')
-    parser.add_argument('--mcube_threshold', type=float, default=0.0)
+    parser.add_argument('--conf', type=str, default='./confs/meta_wmask.conf')
     parser.add_argument('--is_continue', default=False, action="store_true")
-    parser.add_argument('--gpu', type=int, default=0)
-    parser.add_argument('--case', type=str, default='')
 
     args = parser.parse_args()
-    meta_conf = read_conf(args.conf, args.case)
+    meta_conf, runner_conf_text = read_conf(args.conf)
     mweights = MetaWeights(meta_conf)
     mp.set_start_method("spawn")
     print("Sharing: ", torch.multiprocessing.get_sharing_strategy())
     print("Num devices: ", torch.cuda.device_count())
+    num_proc = torch.cuda.device_count()
+
+    # Get available cases
+    cases = [f"{n:05d}" for n in range(meta_conf['meta.num_cases'])]
+    print(f"Main: training over cases:\n{cases}")
+
+    def sample_cases():
+        if num_proc > len(cases):
+            picked_idz = random.choices(range(len(cases)), k=num_proc)
+        else:
+            picked_idz = random.sample(range(len(cases)), k=num_proc)
+        return [cases[idz] for idz in picked_idz]
 
     # Set up processes
     ret_q = mp.Queue()
     send_qs = []
     processes = []
-    for idx, d_num in enumerate(range(torch.cuda.device_count())):
+    picked_cases = sample_cases()
+    for d_num in range(num_proc):
         send_qs.append(mp.SimpleQueue())
         processes.append(mp.Process(
             target=device_runner,
-            args=(send_qs[-1], ret_q, meta_conf, d_num)
+            args=(send_qs[-1], ret_q, runner_conf_text, picked_cases[d_num], d_num)
         ))
-        print(f"Main: Starting process {idx}")
+        print(f"Main: Starting process {d_num}")
         processes[-1].start()
 
-    for iter_idx in range(meta_conf["meta.num_outer_iter"]):
-        # TODO: Decide how to distribute cases, for now send same to all sub-processes
-        cases = ["thin_catbus"] * len(send_qs)
+    for iter_idx in range(mweights.iter_step, meta_conf["meta.num_outer_iter"]):
+        picked_cases = sample_cases()
+        t0 = time.time()
+        stats = train_meta_iter(mweights, send_qs, ret_q, picked_cases)
+        print(f"{iter_idx}: Loss {stats['Loss/loss']:.4f} Total {time.time() - t0:.2f}s", end=" ")
+        print(f"Train {stats['train_time']:.2f}s Load {stats['load_time']:.2f}s")
 
-        stats = train_meta_iter(mweights, send_qs, ret_q, cases)
-        print(f"{iter_idx}: {stats['Loss/loss']}")
-
-        # TODO: set save freq
-        # mweights.save_checkpoint()
+        if (iter_idx + 1) % meta_conf['meta.save_freq'] == 0:
+            mweights.save_checkpoint()
 
     # Shutdown flag
     for sq in send_qs:

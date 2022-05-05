@@ -220,7 +220,7 @@ class Runner:
             self.optimizer.load_state_dict(checkpoint['optimizer'])
         self.iter_step = checkpoint['iter_step']
 
-        logging.info('End')
+        logging.info('Loaded checkpoint')
 
     def save_checkpoint(self):
         checkpoint = {
