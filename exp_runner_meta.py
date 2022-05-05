@@ -231,7 +231,7 @@ class Runner:
         params_to_train += list(self.deviation_network.parameters())
         params_to_train += list(self.color_network.parameters())
 
-        self.optimizer = torch.optim.Adam(params_to_train, lr=self.learning_rate)
+        self.optimizer = torch.optim.SGD(params_to_train, lr=self.learning_rate)
 
         self.renderer = NeuSRenderer(self.nerf_outside,
                                      self.sdf_network,
@@ -616,7 +616,7 @@ def train_meta_iter(mweights: MetaWeights, send_qs, ret_q, picked_cases):
     for _ in range(len(send_qs)):
         # Will deadlock if a sub-process crashes
         pid, info, stat = ret_q.get(block=True)
-        print(f"Main: Received weights from {pid}")
+        # print(f"Main: Received weights from {pid}")
         sd_infos.append(info)
         for k, v in stat.items():
             stats.add_scalar(k, v, None)
