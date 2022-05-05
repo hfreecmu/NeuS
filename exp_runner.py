@@ -21,8 +21,9 @@ def do_base_learning(model, data, lr_inner, n_inner):
     new_model = None 
 
 class Runner:
-    def __init__(self, conf_path, mode='train', case='CASE_NAME', is_continue=False):
+    def __init__(self, conf_path, mode='train', case='CASE_NAME', is_continue=False, is_meta=False):
         self.device = torch.device('cuda')
+
 
         # Configuration
         self.conf_path = conf_path
@@ -37,6 +38,11 @@ class Runner:
         os.makedirs(self.base_exp_dir, exist_ok=True)
         self.dataset = Dataset(self.conf['dataset'])
         self.iter_step = 0
+
+        is_meta = self.conf.get_bool('train.meta_eval', default=False)
+        if is_meta: 
+            is_continue = True
+
 
         # Training parameters
         self.end_iter = self.conf.get_int('train.end_iter')
@@ -71,7 +77,10 @@ class Runner:
         params_to_train += list(self.deviation_network.parameters())
         params_to_train += list(self.color_network.parameters())
 
-        self.optimizer = torch.optim.Adam(params_to_train, lr=self.learning_rate)
+        if is_meta: 
+            self.optimizer = torch.optim.SGD(params_to_train, lr=self.learning_rate)
+        else: 
+            self.optimizer = torch.optim.Adam(params_to_train, lr=self.learning_rate)
 
         self.renderer = NeuSRenderer(self.nerf_outside,
                                      self.sdf_network,
