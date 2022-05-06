@@ -79,9 +79,13 @@ class Dataset:
         for im_path in self.images_lis:
             #num = os.path.basename(im_path).split('.png')[0]
             try:
-                self.scale_mats_np.append(camera_dict['scale_mat_' + num].astype(np.float32))
+                scale = camera_dict['scale_mat_' + num].astype(np.float32)
             except KeyError:
-                self.scale_mats_np.append(camera_dict['scale_mat_%d' % int(num)].astype(np.float32))
+                scale = camera_dict['scale_mat_%d' % int(num)].astype(np.float32)
+            
+            inv_scale = np.linalg.inv(scale)
+            self.scale_mats_np.append(inv_scale)
+
             #scale_mat_np = np.eye(4)
             #scale_mat_np[0:3, 0:3] = np.eye(3)
             #self.scale_mats_np.append(scale_mat_np)

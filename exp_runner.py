@@ -44,7 +44,6 @@ class Runner:
             is_continue = True
         self.is_meta = is_meta
 
-
         # Training parameters
         self.end_iter = self.conf.get_int('train.end_iter')
         self.save_freq = self.conf.get_int('train.save_freq')
@@ -92,13 +91,18 @@ class Runner:
         # Load checkpoint
         latest_model_name = None
         if is_continue:
-            model_list_raw = os.listdir(os.path.join(self.base_exp_dir, 'checkpoints'))
-            model_list = []
-            for model_name in model_list_raw:
-                if model_name[-3:] == 'pth' and int(model_name[5:-4]) <= self.end_iter:
-                    model_list.append(model_name)
-            model_list.sort()
-            latest_model_name = model_list[-1]
+            ckpt_dir = os.path.join(self.base_exp_dir, 'checkpoints')
+            print(ckpt_dir)
+            if not os.path.exists(ckpt_dir):
+                print("WARNING: Failed to load weights, no checkpoint dir")
+            else:
+                model_list_raw = os.listdir(ckpt_dir)
+                model_list = []
+                for model_name in model_list_raw:
+                    if model_name[-3:] == 'pth' and int(model_name[5:-4]) <= self.end_iter:
+                        model_list.append(model_name)
+                model_list.sort()
+                latest_model_name = model_list[-1]
 
         if latest_model_name is not None:
             logging.info('Find checkpoint: {}'.format(latest_model_name))
@@ -115,6 +119,8 @@ class Runner:
         self.update_learning_rate()
         res_step = self.end_iter - self.iter_step
         image_perm = self.get_image_perm()
+        # losses = []
+
 
         for iter_i in tqdm(range(res_step)):
             data = self.dataset.gen_random_rays_at(image_perm[self.iter_step % len(image_perm)], self.batch_size)
@@ -161,6 +167,12 @@ class Runner:
             self.optimizer.step()
 
             self.iter_step += 1
+            """
+            losses.append(loss.item())
+            if self.iter_step >= len(image_perm):
+                print(torch.tensor(losses).mean())
+                exit()
+            """
 
             self.writer.add_scalar('Loss/loss', loss, self.iter_step)
             self.writer.add_scalar('Loss/color_loss', color_fine_loss, self.iter_step)

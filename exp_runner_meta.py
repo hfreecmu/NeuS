@@ -146,6 +146,13 @@ class MetaWeights:
         self.color.load_state_dict(checkpoint['color_network_fine'])
         for o, sd in zip(self.optims, checkpoint['meta_optims']):
             o.load_state_dict(sd)
+
+        for o in self.optims:
+            for g in o.param_groups:
+                if g['lr'] != self.lr: 
+                    print(f"While loading found optim lr {g['lr']}, overriding to {self.lr}")
+                    g['lr'] = self.lr
+
         self.iter_step = checkpoint['iter_step']
         print(f"Main: Loaded weights, resuming from outer loop {self.iter_step}")
 
