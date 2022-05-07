@@ -28,7 +28,6 @@ def do_base_learning(model, data, lr_inner, n_inner):
 class Runner:
     def __init__(self, conf_path, mode='train', case='CASE_NAME', is_continue=False, weight_path=None):
         self.device = torch.device('cuda')
-        print(weight_path)
 
         # Configuration
         self.conf_path = conf_path
@@ -111,14 +110,15 @@ class Runner:
                         model_list.append(model_name)
                 model_list.sort()
                 latest_model_name = model_list[-1]
-        if latest_model_name is not None:
+        if latest_model_name is not None and weight_path is None:
             logging.info('Find checkpoint: {}'.format(latest_model_name))
             self.load_checkpoint(latest_model_name)
 
-        if is_meta: 
+        if weight_path is not None: 
             if not os.path.exists(weight_path): 
                 print(f"Manually provided weight path doesn't exist: {weight_path}")
                 exit()
+            print(f"Loaded from {weight_path}")
             self.load_checkpoint(weight_path, True)
             self.iter_step = 0
 
@@ -358,7 +358,8 @@ class Runner:
         img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3]) * 256).clip(0, 255).astype(np.uint8)
         return img_fine
 
-    def compute_PSNR(self, training_dir, ref_dir, case):
+    def compute_PSNR(self, training_dir, ref_dir, weight_path, sampling_freq=5):
+
         training_images = sorted(Path(training_dir).glob("*"))
         ref_images = sorted(Path(ref_dir).glob("*"))
         ref_masks = [Path(str(x).replace("image", "mask")) for x in ref_images]
@@ -369,24 +370,29 @@ class Runner:
         in_training_subset = np.isin(ref_image_stems, training_image_stems)
 
         ## not_in_subset = np.logical_not(in_subset)
-        #color_error = (color_fine - true_rgb) * mask
-        #color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error), reduction='sum') / mask_sum
-        #psnr = 20.0 * torch.log10(1.0 / (((color_fine - true_rgb)**2 * mask).sum() / (mask_sum * 3.0)).sqrt())
+        # color_error = (color_fine - true_rgb) * mask
+        # color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error), reduction='sum') / mask_sum
+        # psnr = 20.0 * torch.log10(1.0 / (((color_fine - true_rgb)**2 * mask).sum() / (mask_sum * 3.0)).sqrt())
         # stem = training_images[0].parts[1]
 
         now = datetime.now()
  
         # dd/mm/YY H:M:S
         dt_string = now.strftime("__%H_%M_%S")
-
+        case = str(Path(weight_path).parts[1]) 
         output_dir = str(Path("temp", f"{case}_{dt_string}"))
 
         os.makedirs(output_dir, exist_ok=True)
-        psnr_values = []
-        l1_values = []
 
-        for i in tqdm(range(len(ref_images))):
-            real_image = cv.imread(str(ref_images[i]))
+        seen_psnr_values = []
+        seen_l1_values = []
+
+        unseen_psnr_values = []
+        unseen_l1_values = []
+
+        for i in tqdm(range(0,len(ref_images[:2]), sampling_freq)):
+            real_image_name = str(ref_images[i])
+            real_image = cv.imread(real_image_name)
             mask = cv.imread(str(ref_masks[i])) / 255.0
             mask_sum = mask.sum() + 1e-5
 
@@ -397,10 +403,7 @@ class Runner:
             cv.imwrite(output_render_file, rendered_image)
 
             output_real_file = f"{output_dir}/real_{i:03d}.png"
-            cv.imwrite(output_real_file, rendered_image)
-
-            if in_training_subset[i]:
-                continue
+            cv.imwrite(output_real_file, real_image * mask)
 
             rendered_image = torch.Tensor(rendered_image)
             mask = torch.Tensor(mask)
@@ -410,13 +413,39 @@ class Runner:
             l1_error = F.l1_loss(color_error, torch.zeros_like(color_error), reduction='sum') / mask_sum
             psnr = 20.0 * torch.log10(1.0 / (((rendered_image - real_image)**2 * mask).sum() / (mask_sum * 3.0)).sqrt())
 
-            psnr_values.append(psnr)
-            l1_values.append(l1_error)
+            if in_training_subset[i]:
+                seen_psnr_values.append(psnr.cpu().numpy())
+                seen_l1_values.append(l1_error.cpu().numpy())
+            else:
+                unseen_psnr_values.append(psnr.cpu().numpy())
+                unseen_l1_values.append(l1_error.cpu().numpy())
 
-        print(f"Mean PSNR {np.mean(psnr_value)}")
-        print(f"Mean L1 error {np.mean(l1_values)}")
-        np.save("psnr.npy", psnr_values)
-        np.save("l1.npy", l1_values)
+        seen_psnr = np.mean(seen_psnr_values)
+        seen_L1 = np.mean(seen_l1_values)
+        unseen_psnr = np.mean(unseen_psnr_values)
+        unseen_L1 = np.mean(unseen_l1_values)
+
+        print(f"Mean seen PSNR {np.mean(seen_psnr_values)}")
+        print(f"Mean seen L1 error {np.mean(seen_l1_values)}")
+        try:
+            print(f"Mean unseen PSNR {np.mean(unseen_psnr_values)}")
+            print(f"Mean unseen L1 error {np.mean(unseen_l1_values)}")
+        except:
+            print("No unseen images")
+
+        #np.save("unseen_psnr.npy", unseen_psnr_values)
+        #np.save("unseen_l1.npy",   unseen_l1_values)
+        #np.save("seen_psnr.npy",   seen_psnr_values)
+        #np.save("seen_l1.npy",     seen_l1_values)
+        logfile = Path(output_dir, "log_file.txt")
+        print(f"Writing to log file {logfile}")
+        with open(logfile, "w") as outfile_h:
+            outfile_h.write(f"Exp: {case}\n")
+            outfile_h.write(f"Seen psnr: {seen_psnr}\n")
+            outfile_h.write(f"Seen L1: {seen_L1}\n")
+            outfile_h.write(f"Unseen psnr: {unseen_psnr}\n")
+            outfile_h.write(f"Unseen L1: {unseen_L1}\n")
+
 
 
     def validate_mesh(self, world_space=False, resolution=64, threshold=0.0):
@@ -489,7 +518,7 @@ if __name__ == '__main__':
     torch.cuda.set_device(args.gpu)
     runner = Runner(args.conf, args.mode, args.case, True, weight_path=args.weight_path)
     if args.mode == 'psnr':
-        runner.compute_PSNR(args.training_directory, args.ref_directory, args.case)
+        runner.compute_PSNR(args.training_directory, args.ref_directory, args.weight_path)
     elif args.mode == 'chamfer':
         runner.validate_mesh(world_space=True, resolution=512, threshold=args.mcube_threshold)
     elif args.mode.startswith('interpolate'):  # Interpolate views given two image indices
