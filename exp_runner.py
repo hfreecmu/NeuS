@@ -21,9 +21,9 @@ def do_base_learning(model, data, lr_inner, n_inner):
     new_model = None 
 
 class Runner:
-    def __init__(self, conf_path, mode='train', case='CASE_NAME', is_continue=False, is_meta=False):
+    def __init__(self, conf_path, mode='train', case='CASE_NAME', is_continue=False, weight_path=None):
         self.device = torch.device('cuda')
-
+        print(weight_path)
 
         # Configuration
         self.conf_path = conf_path
@@ -40,8 +40,7 @@ class Runner:
         self.iter_step = 0
 
         is_meta = self.conf.get_bool('train.meta_eval', default=False)
-        if is_meta: 
-            is_continue = True
+        optim = self.conf.get_string('train.optim', default="Adam")
         self.is_meta = is_meta
 
         # Training parameters
@@ -77,9 +76,11 @@ class Runner:
         params_to_train += list(self.deviation_network.parameters())
         params_to_train += list(self.color_network.parameters())
 
-        if is_meta: 
+        if is_meta and optim == "SGD": 
             self.optimizer = torch.optim.SGD(params_to_train, lr=self.learning_rate)
+            print("Training with SGD")
         else: 
+            print("Training with Adam")
             self.optimizer = torch.optim.Adam(params_to_train, lr=self.learning_rate)
 
         self.renderer = NeuSRenderer(self.nerf_outside,
@@ -90,6 +91,8 @@ class Runner:
 
         # Load checkpoint
         latest_model_name = None
+        if is_meta:
+            is_continue = False
         if is_continue:
             ckpt_dir = os.path.join(self.base_exp_dir, 'checkpoints')
             print(ckpt_dir)
@@ -103,12 +106,17 @@ class Runner:
                         model_list.append(model_name)
                 model_list.sort()
                 latest_model_name = model_list[-1]
-
         if latest_model_name is not None:
             logging.info('Find checkpoint: {}'.format(latest_model_name))
             self.load_checkpoint(latest_model_name)
+
         if is_meta: 
+            if not os.path.exists(weight_path): 
+                print(f"Manually provided weight path doesn't exist: {weight_path}")
+                exit()
+            self.load_checkpoint(weight_path, True)
             self.iter_step = 0
+
 
         # Backup codes and configs for debug
         if self.mode[:5] == 'train':
@@ -236,8 +244,12 @@ class Runner:
 
         copyfile(self.conf_path, os.path.join(self.base_exp_dir, 'recording', 'config.conf'))
 
-    def load_checkpoint(self, checkpoint_name):
-        checkpoint = torch.load(os.path.join(self.base_exp_dir, 'checkpoints', checkpoint_name), map_location=self.device)
+    def load_checkpoint(self, checkpoint_name, name_direct=False):
+        if name_direct:
+            new_name = checkpoint_name
+        else:
+            new_name = os.path.join(self.base_exp_dir, 'checkpoints', checkpoint_name)
+        checkpoint = torch.load(new_name, map_location=self.device)
         self.nerf_outside.load_state_dict(checkpoint['nerf'])
         self.sdf_network.load_state_dict(checkpoint['sdf_network_fine'])
         self.deviation_network.load_state_dict(checkpoint['variance_network_fine'])
@@ -414,11 +426,12 @@ if __name__ == '__main__':
     parser.add_argument('--is_continue', default=False, action="store_true")
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--case', type=str, default='')
+    parser.add_argument('--weight_path', type=str, default='')
 
     args = parser.parse_args()
 
     torch.cuda.set_device(args.gpu)
-    runner = Runner(args.conf, args.mode, args.case, args.is_continue)
+    runner = Runner(args.conf, args.mode, args.case, args.is_continue, weight_path=args.weight_path)
 
     if args.mode == 'train':
         runner.train()

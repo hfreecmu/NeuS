@@ -359,14 +359,12 @@ class Runner:
         return img_fine
 
     def compute_PSNR(self, training_dir, ref_dir, weight_path, sampling_freq=5):
-
         training_images = sorted(Path(training_dir).glob("*"))
         ref_images = sorted(Path(ref_dir).glob("*"))
         ref_masks = [Path(str(x).replace("image", "mask")) for x in ref_images]
 
         training_image_stems = [x.name for x in training_images]
         ref_image_stems = [x.name for x in ref_images]
-
         in_training_subset = np.isin(ref_image_stems, training_image_stems)
 
         ## not_in_subset = np.logical_not(in_subset)
@@ -390,7 +388,9 @@ class Runner:
         unseen_psnr_values = []
         unseen_l1_values = []
 
-        for i in tqdm(range(0,len(ref_images[:2]), sampling_freq)):
+        print()
+
+        for i in tqdm(range(0,len(ref_images), sampling_freq)):
             real_image_name = str(ref_images[i])
             real_image = cv.imread(real_image_name)
             mask = cv.imread(str(ref_masks[i])) / 255.0
