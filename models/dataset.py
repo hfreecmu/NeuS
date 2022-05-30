@@ -50,17 +50,16 @@ class Dataset:
         self.scale_mat_scale = conf.get_float('scale_mat_scale', default=1.1)
 
         camera_dict = np.load(os.path.join(self.data_dir, self.render_cameras_name))
-        self.camera_dict = camera_dict
         self.images_lis = sorted(glob(os.path.join(self.data_dir, 'image/*.png')))
-        self.masks_lis = sorted(glob(os.path.join(self.data_dir, 'mask/*.png')))
+        masks_lis = sorted(glob(os.path.join(self.data_dir, 'mask/*.png')))
         if max_images is not None:
             permute = np.arange(len(self.images_lis))
             np.random.shuffle(permute)
             self.images_lis = sorted([self.images_lis[i] for i in permute[:max_images]])
-            self.masks_lis = sorted([self.masks_lis[i] for i in permute[:max_images]])
+            masks_lis = sorted([masks_lis[i] for i in permute[:max_images]])
         self.n_images = len(self.images_lis)
         images_np = [cv.imread(im_name) / 256.0 for im_name in self.images_lis]
-        masks_np = [cv.imread(im_name) / 256.0 for im_name in self.masks_lis]
+        masks_np = [cv.imread(im_name) / 256.0 for im_name in masks_lis]
 
         # world_mat is a projection matrix from world to image
         #self.world_mats_np = [camera_dict['world_mat_%d' % idx].astype(np.float32) for idx in range(self.n_images)]
@@ -74,7 +73,6 @@ class Dataset:
 
         # scale_mat: used for coordinate normalization, we assume the scene to render is inside a unit sphere at origin.
         #self.scale_mats_np = [camera_dict['scale_mat_%d' % idx].astype(np.float32) for idx in range(self.n_images)]
-
         self.scale_mats_np = []
         for im_path in self.images_lis:
             #num = os.path.basename(im_path).split('.png')[0]
@@ -83,8 +81,9 @@ class Dataset:
             except KeyError:
                 scale = camera_dict['scale_mat_%d' % int(num)].astype(np.float32)
             
-            inv_scale = np.linalg.inv(scale)
-            self.scale_mats_np.append(inv_scale)
+            #inv_scale = np.linalg.inv(scale)
+            #self.scale_mats_np.append(inv_scale)
+            self.scale_mats_np.append(scale)
 
             #scale_mat_np = np.eye(4)
             #scale_mat_np[0:3, 0:3] = np.eye(3)
@@ -93,8 +92,6 @@ class Dataset:
         self.intrinsics_all = []
         self.pose_all = []
 
-        dummy_mat = np.zeros((4, 1))
-        dummy_mat[3] = 1
         for scale_mat, world_mat in zip(self.scale_mats_np, self.world_mats_np):
             P = world_mat @ scale_mat
             P = P[:3, :4]
@@ -126,12 +123,17 @@ class Dataset:
         self.object_bbox_min = object_bbox_min[:3, 0]
         self.object_bbox_max = object_bbox_max[:3, 0]
 
+        del camera_dict
+        print('here')
         self.to(f"cuda:{dnum}")
+        print('not here', flush=True)
 
         # print('Load data: End')
     def to(self, device):
         self.intrinsics_all = self.intrinsics_all.to(device)
+        print('a', flush=True)
         self.intrinsics_all_inv = self.intrinsics_all_inv.to(device)
+        print('b', flush=True)
         self.pose_all = self.pose_all.to(device)
 
 

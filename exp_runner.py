@@ -16,6 +16,9 @@ from models.dataset import Dataset
 from models.fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, NeRF
 from models.renderer import NeuSRenderer
 
+import imageio
+import open3d
+
 # Inspired by https://github.com/gabrielhuang/reptile-pytorch/blob/master/reptile_sine.ipynb
 def do_base_learning(model, data, lr_inner, n_inner):
     new_model = None 
@@ -373,6 +376,9 @@ class Runner:
         bound_min = torch.tensor(self.dataset.object_bbox_min, dtype=torch.float32)
         bound_max = torch.tensor(self.dataset.object_bbox_max, dtype=torch.float32)
 
+        #bound_min = torch.tensor(self.dataset.object_bbox_min*0.5, dtype=torch.float32)
+        #bound_max = torch.tensor(self.dataset.object_bbox_max*0.5, dtype=torch.float32)
+
         vertices, triangles =\
             self.renderer.extract_geometry(bound_min, bound_max, resolution=resolution, threshold=threshold)
         os.makedirs(os.path.join(self.base_exp_dir, 'meshes'), exist_ok=True)
@@ -385,9 +391,58 @@ class Runner:
 
         logging.info('End')
 
+    def validate_mesh_with_color(self, world_space=False, resolution=64, threshold=0.0):
+        #bound_min = torch.tensor(self.dataset.object_bbox_min, dtype=torch.float32)
+        #bound_max = torch.tensor(self.dataset.object_bbox_max, dtype=torch.float32)
+
+        bound_min = torch.tensor(self.dataset.object_bbox_min*0.5, dtype=torch.float32)
+        bound_max = torch.tensor(self.dataset.object_bbox_max*0.5, dtype=torch.float32)
+
+        vertices, triangles =\
+            self.renderer.extract_geometry(bound_min, bound_max, resolution=resolution, threshold=threshold)
+        #os.makedirs(os.path.join(self.base_exp_dir, 'meshes'), exist_ok=True)
+
+        pts = torch.tensor(vertices).float()
+        sampled_colors = []
+        start_ind = 0
+        while start_ind < pts.shape[0]:
+            print(start_ind)
+            end_ind = np.min([pts.shape[0], start_ind + 8192])
+            sub_pts = pts[start_ind: end_ind]
+
+            sdf_nn_output = self.renderer.sdf_network(sub_pts)
+            feature_vector = sdf_nn_output[:, 1:]
+            gradients = self.renderer.sdf_network.gradient(sub_pts).squeeze()
+            dirs = self.dataset.pose_all[0, None, :3, 3].expand(sub_pts.shape)
+            sampled_color = self.renderer.color_network(sub_pts, gradients, dirs, feature_vector)
+            sampled_colors.append(sampled_color.detach().cpu().numpy())
+
+            start_ind = end_ind
+
+
+        sampled_colors = np.vstack(sampled_colors)
+        print(sampled_colors.shape)
+        print(vertices.shape)
+
+        print('hey here')
+
+        if world_space:
+            vertices = vertices * self.dataset.scale_mats_np[0][0, 0] + self.dataset.scale_mats_np[0][:3, 3][None]
+
+        pcd = open3d.geometry.PointCloud()
+        pcd.points = open3d.utility.Vector3dVector(vertices)
+        pcd.colors = open3d.utility.Vector3dVector(sampled_colors)
+        open3d.io.write_point_cloud(os.path.join(self.base_exp_dir, 'meshes', '{:0>8d}_pcloud.ply'.format(self.iter_step)), pcd)
+
+        #mesh = trimesh.Trimesh(vertices, triangles)
+        #mesh.export(os.path.join(self.base_exp_dir, 'meshes', '{:0>8d}.ply'.format(self.iter_step)))
+
+        logging.info('End')
+
     def interpolate_view(self, img_idx_0, img_idx_1):
         images = []
-        n_frames = 60
+        #n_frames = 60
+        n_frames = 30
         for i in range(n_frames):
             print(i)
             images.append(self.render_novel_image(img_idx_0,
@@ -409,6 +464,9 @@ class Runner:
             writer.write(image)
 
         writer.release()
+
+        imageio.mimsave(os.path.join(video_dir,
+                                             '{:0>8d}_{}_{}.gif'.format(self.iter_step, img_idx_0, img_idx_1)), images)
 
 
 if __name__ == '__main__':
@@ -436,7 +494,8 @@ if __name__ == '__main__':
     if args.mode == 'train':
         runner.train()
     elif args.mode == 'validate_mesh':
-        runner.validate_mesh(world_space=True, resolution=512, threshold=args.mcube_threshold)
+        runner.validate_mesh_with_color(world_space=True, resolution=512, threshold=args.mcube_threshold)
+        #runner.validate_mesh(world_space=True, resolution=1024, threshold=args.mcube_threshold)
     elif args.mode.startswith('interpolate'):  # Interpolate views given two image indices
         _, img_idx_0, img_idx_1 = args.mode.split('_')
         img_idx_0 = int(img_idx_0)
