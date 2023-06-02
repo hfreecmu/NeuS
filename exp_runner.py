@@ -420,9 +420,16 @@ class Runner:
             start_ind = end_ind
 
 
+        #img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3]) * 256).clip(0, 255).astype(np.uint8)
+
         sampled_colors = np.vstack(sampled_colors)
-        print(sampled_colors.shape)
-        print(vertices.shape)
+        b = sampled_colors[:, 0]
+        g = sampled_colors[:, 1]
+        r = sampled_colors[:, 2]
+        sampled_colors = np.zeros(sampled_colors.shape, dtype = sampled_colors.dtype)
+        sampled_colors[:, 0] = r
+        sampled_colors[:, 1] = g
+        sampled_colors[:, 2] = b
 
         print('hey here')
 

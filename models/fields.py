@@ -126,7 +126,7 @@ class RenderingNetwork(nn.Module):
         dims = [d_in + d_feature] + [d_hidden for _ in range(n_layers)] + [d_out]
 
         self.embedview_fn = None
-        if multires_view > 0:
+        if multires_view > 0 and self.mode != 'no_view_dir':
             embedview_fn, input_ch = get_embedder(multires_view)
             self.embedview_fn = embedview_fn
             dims[0] += (input_ch - 3)
